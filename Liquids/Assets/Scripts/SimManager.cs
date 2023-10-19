@@ -44,7 +44,7 @@ public class SimManager : MonoBehaviour
         int perRow = (int)Mathf.Sqrt(Mathf.Abs(nSpheres));
         int perCol = (nSpheres - 1)/ Mathf.Abs(nSpheres) + 1;
 
-        float spacing = sphereSize * 2 + sphereSpacing;
+        float spacing = sphereSize + sphereSpacing;
 
         for (int i = 0; i < Mathf.Abs(nSpheres); i++)
         {
