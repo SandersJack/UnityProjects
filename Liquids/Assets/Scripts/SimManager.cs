@@ -24,13 +24,16 @@ public class SimManager : MonoBehaviour
     void Start()
     {
         createBoundingBox();
-        position = new Vector3(0, 5, 0);
+        position = new Vector3(0, 0, 0);
         spheres.Add(spawnSphere(position));
     }
 
     // Update is called once per frame
     void Update()
     {
+        createBoundingBox();
+        updateSphere();
+
         velocity += Vector3.down * gravity * Time.deltaTime;
         position += velocity * Time.deltaTime;
         spheres[0].transform.localPosition = position;
@@ -80,4 +83,11 @@ public class SimManager : MonoBehaviour
         lineRenderer.endWidth = lineWidth;
     }
 
+    void updateSphere()
+    {
+        foreach (var go in spheres)
+        {
+            go.transform.localScale = new Vector3(sphereSize, sphereSize, sphereSize);
+        }
+    } 
 }
