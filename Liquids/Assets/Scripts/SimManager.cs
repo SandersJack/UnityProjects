@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -14,8 +15,17 @@ public class SimManager : MonoBehaviour
     private SphereCollider sphereCollider;
 
     public float gravity = 9.8f;
-    Vector3[] position;
-    Vector3[] velocity;
+
+    Vector3[] positions;
+    Vector3[] velocities;
+    Vector3[] predictedPositions;
+    Vector3[] pressureForces;
+
+    Entry[] spatialLookup;
+    int[] startIndicies;
+
+    private int[,] cellOffsets = new int[9,2]{ { -1, -1 }, { -1, 0 }, { -1, 1 }, { 0, -1 }, { 0, 0 }, { 0, 1 }
+        ,{ 1, -1 }, { 1, 0 }, { 1, 1 } };
 
     public float sphereSize = 1;
     public int nSpheres = 1;
@@ -28,6 +38,8 @@ public class SimManager : MonoBehaviour
     public float collisionDamping = 0.7f;
 
     public float smoothingRadius = 1.5f;
+
+
 
     float[] densities;
 
@@ -43,10 +55,15 @@ public class SimManager : MonoBehaviour
 
         createBoundingBox();
 
-        position = new Vector3[Mathf.Abs(nSpheres)];
-        velocity = new Vector3[Mathf.Abs(nSpheres)];
+        positions = new Vector3[Mathf.Abs(nSpheres)];
+        velocities = new Vector3[Mathf.Abs(nSpheres)];
+        predictedPositions = new Vector3[Mathf.Abs(nSpheres)];
+        pressureForces = new Vector3[Mathf.Abs(nSpheres)];
 
-        densities= new float[Mathf.Abs(nSpheres)];
+        spatialLookup = new Entry[Mathf.Abs(nSpheres)];
+        startIndicies = new int[Mathf.Abs(nSpheres)];
+
+        densities = new float[Mathf.Abs(nSpheres)];
 
         int perRow = (int)Mathf.Sqrt(Mathf.Abs(nSpheres));
         int perCol = (nSpheres - 1)/ Mathf.Abs(nSpheres) + 1;
@@ -56,9 +73,9 @@ public class SimManager : MonoBehaviour
         for (int i = 0; i < Mathf.Abs(nSpheres); i++)
         {
             float x = (i % perRow - perRow / 2f + 0.5f) * spacing;
-            float y = (i / perRow - perCol / 2f + 0.5f) * spacing;
-            position[i] = new Vector3(x, y, 0);
-            spheres.Add(spawnSphere(position[i]));
+            float y = (i / perRow - perCol / 2f + 0.5f) * spacing - boundsSize.y/2;
+            positions[i] = new Vector3(x, y, 0);
+            spheres.Add(spawnSphere(positions[i]));
         }
 
 
@@ -71,14 +88,14 @@ public class SimManager : MonoBehaviour
         createBoundingBox();
         updateSphere();
 
-        for (int i = 0; i < position.Length; i++)
+        for (int i = 0; i < positions.Length; i++)
         {
-            //velocity[i] += Vector3.down * gravity * Time.deltaTime;
-            //position[i] += velocity[i] * Time.deltaTime;
-            //resolveCollisions(ref position[i], ref velocity[i]);
-            //spheres[i].transform.localPosition = position[i];
+            //velocities[i] += Vector3.down * gravity * Time.deltaTime;
+            //positions[i] += velocities[i] * Time.deltaTime;
+            //resolveCollisions(ref positions[i], ref velocities[i]);
+            //spheres[i].transform.localPosition = positions[i];
             SImulationStep(Time.deltaTime);
-            spheres[i].transform.localPosition = position[i];
+            spheres[i].transform.localPosition = positions[i];
         }
         
 
@@ -155,7 +172,7 @@ public class SimManager : MonoBehaviour
         float density = 0;
         
 
-        foreach (Vector3 pos in position)
+        foreach (Vector3 pos in positions)
         {
             float dist = (pos - samplePoint).magnitude;
             float influence = SmoothingFunc(dist, smoothingRadius);
@@ -170,19 +187,27 @@ public class SimManager : MonoBehaviour
     {
         Parallel.For(0, nSpheres, i =>
         {
-            velocity[i] += Vector3.down * gravity * deltaTime;
-            densities[i] = CalculateDensity(position[i]);
+            velocities[i] += Vector3.down * gravity * deltaTime;
+            predictedPositions[i] = positions[i] + velocities[i] * deltaTime;
         });
+
+        UpdateSpatialLookup(predictedPositions, smoothingRadius);
+
+        Parallel.For(0, nSpheres, i =>
+        {
+            densities[i] = CalculateDensity(predictedPositions[i]);
+        });
+
         Parallel.For(0, nSpheres, i =>
         {
             Vector3 pressureForce = CalculatePressureForce(i);
             Vector3 pressureAcceleration = pressureForce / densities[i];
-            velocity[i] += pressureAcceleration * deltaTime;
+            velocities[i] += pressureAcceleration * deltaTime;
         });
         Parallel.For(0, nSpheres, i =>
         {
-            position[i] += velocity[i] * deltaTime;
-            resolveCollisions(ref position[i], ref velocity[i]);
+            positions[i] += velocities[i] * deltaTime;
+            resolveCollisions(ref positions[i], ref velocities[i]);
         });
     }
     public float targetDensity = 2.75f;
@@ -211,12 +236,12 @@ public class SimManager : MonoBehaviour
 
     Vector3 CalculatePressureForce(int particleIndex)
     {
-        Vector3 pressureForce = Vector3.zero;
+        /*Vector3 pressureForce = Vector3.zero;
 
         for(int otherParticleIndex = 0; otherParticleIndex < nSpheres; otherParticleIndex++)
         {
             if (particleIndex == otherParticleIndex) continue;
-            Vector3 offset = position[otherParticleIndex] - position[particleIndex];
+            Vector3 offset = positions[otherParticleIndex] - positions[particleIndex];
             float dist = offset.magnitude;
             Vector3 dir = dist == 0 ? GetRandomDir() : offset / dist;
             float slope = SmoothingFunc(dist, smoothingRadius);
@@ -225,10 +250,93 @@ public class SimManager : MonoBehaviour
             pressureForce += -sharedPressure * dir * slope * mass / density;
         }
         pressureForce.z = 0;
-        return pressureForce;
+        return pressureForce;*/
+
+        return ForeachPointWithinRadius(positions, particleIndex);
     }
 
-    
+    (int x, int y, int z) PositionToCellCoord(Vector3 point, float radius)
+    {
+        int cellX = (int)(point.x / radius);
+        int cellY = (int)(point.y / radius);    
+        int cellZ = (int)(point.z / radius);
+
+        return (cellX, cellY, cellZ);
+    }
+
+    uint HashCell(int cellX, int cellY)
+    {
+        uint a = (uint)cellX * 15823;
+        uint b = (uint)cellY * 9737333;
+        return a + b;
+    } 
+
+    uint GetKeyFromHash(uint hash)
+    {
+        return hash % (uint)spatialLookup.Length;
+    }
+    void UpdateSpatialLookup(Vector3[] points, float radius)
+    {
+        Parallel.For(0, points.Length, i =>
+        {
+            (int cellX, int cellY, int cellZ) = PositionToCellCoord(points[i], radius);
+            uint cellKey = GetKeyFromHash(HashCell(cellX, cellY));
+            spatialLookup[i] = new Entry(i, cellKey);
+            startIndicies[i] = int.MaxValue;
+        });
+
+        Array.Sort(spatialLookup);
+
+        Parallel.For(0, points.Length, i =>
+        {
+            uint key = spatialLookup[i].cellKey;
+            uint keyPrev = i == 0 ? uint.MaxValue : spatialLookup[i - 1].cellKey;
+            if (key != keyPrev)
+            {
+                startIndicies[i] = i;
+            }
+        });
+
+    }
+
+    Vector3 ForeachPointWithinRadius(Vector3[] points, int sampleIndex)
+    {
+        float radius = smoothingRadius;
+        (int centerX, int centerY, int centerZ) = PositionToCellCoord(points[sampleIndex], radius);
+        float sqrRad = radius * radius;
+
+        Vector3 pressureForce = Vector3.zero;
+
+        for (int t=0; t< cellOffsets.GetLength(0); t++)
+        {
+            //Debug.Log(t + " " + cellOffsets[t, 0]);
+            uint key = GetKeyFromHash(HashCell(centerX + cellOffsets[t,0], centerY + cellOffsets[t, 1]));
+            int cellStartIndex = startIndicies[key];
+
+            for (int i = cellStartIndex; i < spatialLookup.Length; i++)
+            {
+                if (spatialLookup[i].cellKey != key) break;
+
+                int particleIndex = spatialLookup[i].particleIndex;
+                float sqrDist = (points[particleIndex] - points[sampleIndex]).sqrMagnitude;
+
+                if( sqrDist <= radius)
+                {
+                    //Do Somthing
+                    if (sampleIndex == particleIndex) continue;
+                    Vector3 offset = points[particleIndex] - points[sampleIndex];
+                    float dist = offset.magnitude;
+                    Vector3 dir = dist == 0 ? GetRandomDir() : offset / dist;
+                    float slope = SmoothingFunc(dist, smoothingRadius);
+                    float density = densities[particleIndex];
+                    float sharedPressure = CalculateSharedPressure(density, densities[particleIndex]);
+                    pressureForce += -sharedPressure * dir * slope * mass / density;
+                }
+            }
+        }
+        pressureForce.z = 0;
+        return pressureForce;
+    }
 
     #if UNITY_EDITOR
         void Awake()
@@ -251,4 +359,21 @@ public class SimManager : MonoBehaviour
     #endif
 
 
+}
+
+public class Entry : IComparable<Entry>
+{
+    public int particleIndex;
+    public uint cellKey; 
+
+    public Entry(int pI, uint cK)
+    {
+        particleIndex = pI;
+        cellKey = cK;
+    }
+
+    public int CompareTo(Entry objB)
+    {
+        return cellKey.CompareTo(objB.cellKey);
+    }
 }
